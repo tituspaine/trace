@@ -15,7 +15,7 @@ test("health endpoint does not require persistence",async()=>{
  assert.equal(data.persistence,false);
 });
 test("oversized query rejected before contacting upstream",async()=>{
- const response=await worker.fetch(new Request("https://trace.example/api/investigate?q="+"a".repeat(161)));
+ const response=await worker.fetch(new Request("https://trace.example/api/investigate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({q:"a".repeat(161)})}));
  assert.equal(response.status,400);
 });
 test("no unsafe arbitrary fetch route",async()=>{
