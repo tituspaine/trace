@@ -1,3 +1,4 @@
+import { cikFrom, investigateSec } from "./collectors/sec.js";
 import { searchInstitutions } from "./collectors/openalex.js";
 import { domainFrom, investigateDomain } from "./collectors/rdap.js";
 // TRACE: stateless, read-only public business record investigator.
@@ -5,6 +6,7 @@ import { domainFrom, investigateDomain } from "./collectors/rdap.js";
 const GLEIF = "https://api.gleif.org/api/v1";
 const headers = {"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"};
 export function classify(q) {
+  if(cikFrom(q))return "cik";
   if (/^[A-Z0-9]{18}[0-9]{2}$/i.test(q)) return "lei";
   if (/^https?:\/\//i.test(q)) return "url";
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q)) return "email";
@@ -35,7 +37,11 @@ export async function investigate(q) {
   if(q.length<2)throw Error("Enter at least two characters");
   const type=classify(q);
   const out={query:q,type,at:new Date().toISOString(),records:[],searched:[],limitations:[],unsupported:[],errors:[]};
-  if(type==="domain" || type==="url") {
+  if(type==="cik") {
+    out.searched.push("SEC EDGAR public company submissions");
+    try{out.records=[await investigateSec(cikFrom(q),"contact@tituspaine.com")]}catch(e){out.errors.push(String(e.message||e))}
+    out.limitations.push("SEC EDGAR covers reporting companies and other SEC filers, not all businesses.");
+  } else if(type==="domain" || type==="url") {
     const domain=domainFrom(q);
     if(domain){out.searched.push("Public RDAP domain registry");try{out.records=[await investigateDomain(domain)]}catch(e){out.errors.push(String(e.message||e))}out.limitations.push("RDAP availability and registration data vary by registry. Private registration contacts are not collected.");}
     else out.unsupported.push("Invalid or unsupported URL.");
@@ -71,7 +77,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta n
 <style>
 *{box-sizing:border-box}body{margin:0;background:#090d13;color:#e7edf5;font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:820px;margin:auto;padding:28px 20px 90px}header{letter-spacing:.35em;font-weight:800}.hero{text-align:center;padding:17vh 0 35px;max-width:760px;margin:auto}.hero h1{font-size:clamp(40px,8vw,78px);line-height:1.05;letter-spacing:-.065em;margin:0}.muted{color:#93a0b2;line-height:1.6}form{display:flex;gap:8px;max-width:700px;margin:auto;background:#161f2b;border:1px solid #3a485c;padding:8px;border-radius:16px}input{min-width:0;flex:1;background:none;color:white;border:0;outline:0;padding:12px;font-size:16px}button{cursor:pointer;border-radius:10px;padding:11px 14px;border:1px solid #41526a;background:#192536;color:#e5edf8;font:inherit}button.primary{background:#dce8ff;color:#111b2a;border:0;font-weight:700}.hidden{display:none}.panel{margin:18px 0;padding:20px;border:1px solid #303e51;background:#121a25;border-radius:14px}.panel h3{margin-top:0}.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.field{font-size:12px;color:#8e9caf}.value{font-size:14px;overflow-wrap:anywhere;margin-top:5px}.actions{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}.trail{display:flex;gap:6px;flex-wrap:wrap}.trail button{padding:7px 10px;font-size:12px}.pulse{display:inline-block;width:22px;height:22px;background:#90b9ff;border-radius:50%;animation:p 1s infinite alternate;margin-right:12px;box-shadow:0 0 20px #90b9ff88}@keyframes p{to{box-shadow:0 0 0 12px #90b9ff15}}a{color:#accaff}footer{color:#78889b;font-size:12px;border-top:1px solid #2d3948;padding-top:20px;margin-top:60px}
 @media(max-width:520px){.hero{padding:19vh 0 35px}form{gap:4px;padding:5px}input{padding:12px 8px}button.primary{padding:12px 11px}.panel{padding:15px}}@media print{body{background:white;color:black}.tools,.trail,header,footer{display:none}.panel{background:white;color:black;border-color:#aaa}.field,.muted{color:#555}}\n</style></head><body><main><header>TRACE</header>
-<section id="home" class="hero"><h1>Know what the records say.</h1><p class="muted">Investigate public records. Explore documented connections.</p><form id="search"><input id="q" maxlength="160" placeholder="Business name, domain, or LEI…" aria-label="Search identifier" required><button class="primary">Investigate</button></form><p class="muted">No account. No database. Browser-session results only.<br>Source-linked findings. No saved investigations.</p></section>
+<section id="home" class="hero"><h1>Know what the records say.</h1><p class="muted">Investigate public records. Explore documented connections.</p><form id="search"><input id="q" maxlength="160" placeholder="Business, domain, LEI, or CIK…" aria-label="Search identifier" required><button class="primary">Investigate</button></form><p class="muted">No account. No database. Browser-session results only.<br>Source-linked findings. No saved investigations.</p></section>
 <section id="loading" class="panel hidden" role="status"><span class="pulse"></span><span id="progress">Searching public records…</span><p><button id="cancel">Cancel investigation</button></p></section>
 <section id="result" class="hidden"><div id="trail" class="trail"></div><h1 id="title"></h1><p id="summary" class="muted"></p><div class="actions"><button id="back">← Back</button><button id="new">New search</button><button id="export">Download JSON</button><button id="htmlExport">Download HTML</button><button id="print">Print / PDF</button><button id="share">Share</button></div><div id="records"></div></section>
 <footer>TRACE · Source-linked public-record research. Missing results do not establish absence.</footer></main>
@@ -84,9 +90,9 @@ function render(i){current=i;const d=session[i];show("result");$("title").textCo
 $("trail").replaceChildren();session.forEach((x,j)=>{const b=text("button",(j+1)+". "+x.query);b.onclick=()=>render(j);$("trail").append(b)});
 const root=$("records");root.replaceChildren();if(!d.records.length)root.append(text("p","No matching records from available sources. Coverage is incomplete.","muted"));
 for(const r of d.records){const card=text("article","","panel");card.append(text("h3",r.name));const grid=text("div","","row");
-for(const [label,value] of [["LEI",r.lei],["Jurisdiction",r.jurisdiction],["Entity status",r.status],["Registration status",r.registrationStatus],["Registration number",r.registrationNumber],["Legal address",r.legalAddress],["Headquarters",r.headquartersAddress],["Domain",r.domain],["Registered",r.registered],["Expires",r.expires],["Nameservers",r.nameservers?.join(", ")],["Website",r.website],["City",r.city],["Research works",r.worksCount]]])grid.append(field(label,value));card.append(grid);
+for(const [label,value] of [["LEI",r.lei],["SEC CIK",r.cik],["Industry",r.sicDescription],["Tickers",r.tickers?.join(", ")],["Jurisdiction",r.jurisdiction],["Entity status",r.status],["Registration status",r.registrationStatus],["Registration number",r.registrationNumber],["Legal address",r.legalAddress],["Headquarters",r.headquartersAddress],["Domain",r.domain],["Registered",r.registered],["Expires",r.expires],["Nameservers",r.nameservers?.join(", ")],["Website",r.website],["City",r.city],["Research works",r.worksCount]]])grid.append(field(label,value));card.append(grid);
 const p=document.createElement("p"),a=text("a","View original "+r.source.name+" ↗");a.href=r.source.url;a.rel="noopener noreferrer";a.target="_blank";p.append(a);card.append(p);
-if(r.lei||r.domain){const b=text("button","Investigate "+r.name+" →");b.onclick=()=>investigate(r.lei||r.domain);card.append(b)}root.append(card)}
+if(r.lei||r.domain||r.cik){const b=text("button","Investigate "+r.name+" →");b.onclick=()=>investigate(r.lei||r.domain||("CIK "+r.cik));card.append(b)}root.append(card)}
 const details=text("article","","panel");details.append(text("h3","Coverage and limitations"));for(const [name,items] of [["Searched",d.searched],["Unsupported",d.unsupported],["Limitations",d.limitations],["Errors",d.errors]])if(items?.length){details.append(text("div",name,"field"));items.forEach(v=>details.append(text("p",v,"value")))}root.append(details)}
 async function investigate(q){q=q.trim();if(q.length<2)return;const found=session.findIndex(x=>x.query.toLowerCase()===q.toLowerCase());if(found>=0){render(found);return}active?.abort();active=new AbortController();show("loading");$("progress").textContent="Investigating "+q+"…";try{const response=await fetch("/api/investigate?q="+encodeURIComponent(q),{cache:"no-store",signal:active.signal});const d=await response.json();if(!response.ok)throw Error(d.error||"Search failed");session.push(d);render(session.length-1)}catch(e){if(e.name==="AbortError")return;$("progress").textContent="Search failed: "+e.message;setTimeout(()=>show("home"),2500)}}
 $("cancel").onclick=()=>{active?.abort();show("home")};$("search").onsubmit=e=>{e.preventDefault();investigate($("q").value)};$("new").onclick=()=>{$("q").value="";show("home");$("q").focus()};$("back").onclick=()=>current>0?render(current-1):show("home");
