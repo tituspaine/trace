@@ -1,3 +1,4 @@
+import { searchAwards } from "./collectors/usaspending.js";
 import { subjectHint, exactWordMatch } from "./engine/classifier.js";
 import { cikFrom, investigateSec } from "./collectors/sec.js";
 import { searchInstitutions } from "./collectors/openalex.js";
@@ -59,14 +60,15 @@ export async function investigate(q) {
     if(type==="name" && /(?:university|college|institute|research|laboratory|academy)/i.test(q)){out.searched.push("OpenAlex research institution directory");try{out.records.push(...await searchInstitutions(q))}catch(e){out.errors.push("OpenAlex unavailable: "+String(e.message||e))}}
     out.limitations.push("Only LEI-bearing organizations are covered by GLEIF. Person investigations require additional sources.");
     if(subject==="ambiguous_name")out.limitations.push("This may be a person. The current results are organizations only and must not be attributed to a person with a similar name.");
+    if(subject==="organization" && q.length>=5){out.searched.push("USAspending federal awards");try{const awards=await searchAwards(q);out.records.push(...awards.filter(r=>exactWordMatch(q,r.recipient)))}catch(e){out.errors.push("USAspending: "+String(e.message||e))}}
   } else out.unsupported.push("No live collector exists for this identifier yet. TRACE will not fabricate results.");
-  out.sourceStatus=out.searched.map(name=>({name,status:out.errors.some(e=>name.includes("OpenAlex")?e.includes("OpenAlex"):name.includes("GLEIF")?e.includes("GLEIF"):name.includes("SEC")?e.includes("SEC"):name.includes("RDAP")?e.includes("RDAP"):false)?"failed":"completed"}));
+  out.sourceStatus=out.searched.map(name=>({name,status:out.errors.some(e=>name.includes("OpenAlex")?e.includes("OpenAlex"):name.includes("GLEIF")?e.includes("GLEIF"):name.includes("SEC")?e.includes("SEC"):name.includes("RDAP")?e.includes("RDAP"):name.includes("USAspending")?e.includes("USAspending"):false)?"failed":"completed"}));
   return out;
 }
 const json=(x,status=200)=>new Response(JSON.stringify(x),{status,headers});
 export default {async fetch(request){
   const u=new URL(request.url);
-  if(u.pathname==="/api/health" && request.method==="GET")return json({ok:true,persistence:false,collectors:["GLEIF","RDAP","OpenAlex","SEC EDGAR"]});
+  if(u.pathname==="/api/health" && request.method==="GET")return json({ok:true,persistence:false,collectors:["GLEIF","RDAP","OpenAlex","SEC EDGAR","USAspending"]});
   if(u.pathname==="/api/investigate"){
     if(request.method!=="POST")return json({error:"Use POST"},405);
     const origin=request.headers.get("origin");
@@ -102,7 +104,7 @@ function render(i){$("exportPanel").classList.add("hidden");current=i;const d=se
 $("trail").replaceChildren();session.forEach((x,j)=>{const b=text("button",(j+1)+". "+x.query);b.onclick=()=>render(j);$("trail").append(b)});
 const root=$("records");root.replaceChildren();if(!d.records.length){const empty=text("article","","panel");empty.append(text("h3",d.errors.length?"Some sources were unavailable":"No verified matches from supported sources"),text("p",d.type==="name"?"No exact organization-name matches were returned by the connected registries. Person-name investigations are not supported by these registries.":"The connected public registries did not return matching records. This is not evidence that the subject does not exist.","muted"));if(d.errors.length){empty.append(text("p","Source issue: "+d.errors.join("; "),"muted"));const retry=text("button","Retry search");retry.onclick=()=>{session.splice(current,1);investigate(d.query)};empty.append(retry)}root.append(empty)}
 for(const r of d.records){const card=text("article","","panel");card.append(text("h3",r.name));const grid=text("div","","row");
-for(const [label,value] of [["LEI",r.lei],["SEC CIK",r.cik],["Industry",r.sicDescription],["Tickers",r.tickers?.join(", ")],["Jurisdiction",r.jurisdiction],["Entity status",r.status],["Registration status",r.registrationStatus],["Registration number",r.registrationNumber],["Legal address",r.legalAddress],["Headquarters",r.headquartersAddress],["Domain",r.domain],["Registered",r.registered],["Expires",r.expires],["Nameservers",r.nameservers?.join(", ")],["Website",r.website],["City",r.city],["Research works",r.worksCount]]){if(value!==null&&value!==undefined&&value!==""&&!(Array.isArray(value)&&!value.length))grid.append(field(label,value))}card.append(grid);
+for(const [label,value] of [["LEI",r.lei],["SEC CIK",r.cik],["Industry",r.sicDescription],["Tickers",r.tickers?.join(", ")],["Jurisdiction",r.jurisdiction],["Entity status",r.status],["Registration status",r.registrationStatus],["Registration number",r.registrationNumber],["Legal address",r.legalAddress],["Headquarters",r.headquartersAddress],["Domain",r.domain],["Registered",r.registered],["Expires",r.expires],["Nameservers",r.nameservers?.join(", ")],["Website",r.website],["City",r.city],["Research works",r.worksCount],["Federal award amount",r.amount],["Awarding agency",r.awardingAgency],["Award type",r.awardType],["Award description",r.description]]){if(value!==null&&value!==undefined&&value!==""&&!(Array.isArray(value)&&!value.length))grid.append(field(label,value))}card.append(grid);
 const p=document.createElement("p"),a=text("a","View original "+r.source.name+" ↗");a.href=r.source.url;a.rel="noopener noreferrer";a.target="_blank";p.append(a);card.append(p);
 if(r.lei||r.domain||r.cik){const b=text("button","Investigate "+r.name+" →");b.onclick=()=>investigate(r.lei||r.domain||("CIK "+r.cik));card.append(b)}root.append(card)}
 const details=text("article","","panel");details.append(text("h3","Coverage and limitations"));for(const [name,items] of [["Searched",d.searched],["Unsupported",d.unsupported],["Limitations",d.limitations],["Errors",d.errors]])if(items?.length){details.append(text("div",name,"field"));items.forEach(v=>details.append(text("p",v,"value")))}root.append(details);
