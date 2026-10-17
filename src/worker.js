@@ -1,3 +1,4 @@
+import { domainFrom, investigateDomain } from "./collectors/rdap.js";
 // TRACE: stateless, read-only public business record investigator.
 // Initial real source: GLEIF's public Legal Entity Identifier API.
 const GLEIF = "https://api.gleif.org/api/v1";
@@ -7,6 +8,7 @@ export function classify(q) {
   if (/^https?:\/\//i.test(q)) return "url";
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q)) return "email";
   if (/^\+?[\d\s().-]{8,}$/.test(q)) return "phone";
+  if (domainFrom(q)) return "domain";
   return "name";
 }
 export function normalize(row) {
@@ -32,7 +34,11 @@ export async function investigate(q) {
   if(q.length<2)throw Error("Enter at least two characters");
   const type=classify(q);
   const out={query:q,type,at:new Date().toISOString(),records:[],searched:[],limitations:[],unsupported:[],errors:[]};
-  if(type==="lei"||type==="name"){
+  if(type==="domain" || type==="url") {
+    const domain=domainFrom(q);
+    if(domain){out.searched.push("Public RDAP domain registry");try{out.records=[await investigateDomain(domain)]}catch(e){out.errors.push(String(e.message||e))}out.limitations.push("RDAP availability and registration data vary by registry. Private registration contacts are not collected.");}
+    else out.unsupported.push("Invalid or unsupported URL.");
+  } else if(type==="lei"||type==="name"){
     out.searched.push("GLEIF public LEI registry");
     try{
       const path=type==="lei"?"/lei-records/"+encodeURIComponent(q.toUpperCase()):
@@ -74,9 +80,9 @@ function render(i){current=i;const d=session[i];show("result");$("title").textCo
 $("trail").replaceChildren();session.forEach((x,j)=>{const b=text("button",(j+1)+". "+x.query);b.onclick=()=>render(j);$("trail").append(b)});
 const root=$("records");root.replaceChildren();if(!d.records.length)root.append(text("p","No matching records from available sources. Coverage is incomplete.","muted"));
 for(const r of d.records){const card=text("article","","panel");card.append(text("h3",r.name));const grid=text("div","","row");
-for(const [label,value] of [["LEI",r.lei],["Jurisdiction",r.jurisdiction],["Entity status",r.status],["Registration status",r.registrationStatus],["Registration number",r.registrationNumber],["Legal address",r.legalAddress],["Headquarters",r.headquartersAddress]])grid.append(field(label,value));card.append(grid);
+for(const [label,value] of [["LEI",r.lei],["Jurisdiction",r.jurisdiction],["Entity status",r.status],["Registration status",r.registrationStatus],["Registration number",r.registrationNumber],["Legal address",r.legalAddress],["Headquarters",r.headquartersAddress],["Domain",r.domain],["Registered",r.registered],["Expires",r.expires],["Nameservers",r.nameservers?.join(", ")]])grid.append(field(label,value));card.append(grid);
 const p=document.createElement("p"),a=text("a","Original GLEIF record ↗");a.href=r.source.url;a.rel="noopener noreferrer";a.target="_blank";p.append(a);card.append(p);
-const b=text("button","Investigate "+r.name+" →");b.onclick=()=>investigate(r.lei);card.append(b);root.append(card)}
+const b=text("button","Investigate "+r.name+" →");b.onclick=()=>investigate(r.lei||r.domain);card.append(b);root.append(card)}
 const details=text("article","","panel");details.append(text("h3","Coverage and limitations"));for(const [name,items] of [["Searched",d.searched],["Unsupported",d.unsupported],["Limitations",d.limitations],["Errors",d.errors]])if(items?.length){details.append(text("div",name,"field"));items.forEach(v=>details.append(text("p",v,"value")))}root.append(details)}
 async function investigate(q){q=q.trim();if(q.length<2)return;const found=session.findIndex(x=>x.query.toLowerCase()===q.toLowerCase());if(found>=0){render(found);return}show("loading");$("progress").textContent="Investigating "+q+"…";try{const response=await fetch("/api/investigate?q="+encodeURIComponent(q),{cache:"no-store"});const d=await response.json();if(!response.ok)throw Error(d.error||"Search failed");session.push(d);render(session.length-1)}catch(e){$("progress").textContent="Search failed: "+e.message;setTimeout(()=>show("home"),2500)}}
 $("search").onsubmit=e=>{e.preventDefault();investigate($("q").value)};$("new").onclick=()=>{$("q").value="";show("home");$("q").focus()};$("back").onclick=()=>current>0?render(current-1):show("home");
