@@ -1,1 +1,67 @@
-# trace 1
+# TRACE
+
+**TRACE** is a free, MIT-licensed, stateless, browser-session investigation tool for publicly accessible records.
+
+## Current working scope
+
+- Minimal responsive search UI.
+- Real GLEIF Legal Entity Identifier (LEI) public-registry collector.
+- Search by organization name or exact 20-character LEI.
+- View source-linked legal entity records and registration details.
+- Click a discovered entity to investigate its exact LEI.
+- Navigate prior searches retained in browser memory.
+- Export the entire session as JSON or open the native share sheet on supported devices.
+- No database, user account, cookie, or persistent server-side investigation storage.
+- Explicit source-coverage, errors, and unsupported identifier reporting.
+
+**Not yet implemented:** Georgia Secretary of State collector, nationwide property/court/licensing collectors, C++/WASM processing, full relationship graph, PDF/HTML exports, streaming updates, production deployment, and abuse controls. TRACE is not a comprehensive background-check service. It must not infer private contact details, private whereabouts, or unverified personal relationships.
+
+## Run locally
+
+Requires Node.js 20+.
+
+```sh
+npm install
+npm test
+npm run dev
+```
+
+Open the localhost URL printed by Wrangler.
+
+## Deploy
+
+```sh
+npx wrangler login
+npm run deploy
+```
+
+Deploying requires authorization for your Cloudflare account. Free-tier quotas and upstream service restrictions apply. **The public URL is not access control**: anyone with the address can potentially invoke the API. Do not deploy without considering abuse and resource limits.
+
+## API
+
+`GET /api/health` — health and persistence status.
+
+`GET /api/investigate?q=example` — query the currently supported public registry and return structured findings, source references, limitations, and errors.
+
+## Architecture
+
+- Cloudflare Worker serves the browser UI and bounded investigation API.
+- Browser memory retains session investigation history.
+- Cloud requests are read-only and have an 8-second upstream timeout.
+- No permanent server-side storage.
+- No AI is used in this initial implementation.
+- Future C++ components will be added where profiling demonstrates a benefit.
+
+## Development milestones
+
+1. **Foundation and live vertical slice** — current.
+2. More verified business and Georgia public-record collectors.
+3. Browser-side entity graph, confidence levels, and improved source provenance.
+4. PDF and self-contained HTML export.
+5. Concurrency controls, retry policy, observability without query logging, and resource budgets.
+6. Optional C++/WebAssembly parsers and optional AI-assisted document interpretation.
+7. Nationwide jurisdiction-specific source expansion, integration tests, and production validation.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
