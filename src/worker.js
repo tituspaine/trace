@@ -52,7 +52,7 @@ export async function investigate(q) {
         "/lei-records?filter[entity.legalName]="+encodeURIComponent(q)+"&page[size]=25";
       const result=await source(path);
       out.records=(Array.isArray(result.data)?result.data:result.data?[result.data]:[]).map(normalize);
-      if(type==="name"){const tokens=q.toLocaleLowerCase().split(/\\s+/).filter(Boolean);out.records=out.records.filter(r=>tokens.every(t=>String(r.name).toLocaleLowerCase().split(/[^\\p{L}\\p{N}]+/u).some(w=>w===t)));out.records.sort((a,b)=>Number(b.name.toLocaleLowerCase()===q.toLocaleLowerCase())-Number(a.name.toLocaleLowerCase()===q.toLocaleLowerCase()));}
+      if(type==="name"){const tokens=q.toLocaleLowerCase().split(/\s+/).filter(Boolean);out.records=out.records.filter(r=>tokens.every(t=>String(r.name).toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).some(w=>w===t)));out.records.sort((a,b)=>Number(b.name.toLocaleLowerCase()===q.toLocaleLowerCase())-Number(a.name.toLocaleLowerCase()===q.toLocaleLowerCase()));}
     }catch(e){out.errors.push(String(e.message||e))}
     if(type==="name" && /(?:university|college|institute|research|laboratory|academy)/i.test(q)){out.searched.push("OpenAlex research institution directory");try{out.records.push(...await searchInstitutions(q))}catch(e){out.errors.push("OpenAlex unavailable: "+String(e.message||e))}}
     out.limitations.push("Only LEI-bearing organizations are covered by GLEIF. Person investigations require additional sources.");
