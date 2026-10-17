@@ -6,15 +6,17 @@
 
 - Minimal responsive search UI.
 - Real GLEIF Legal Entity Identifier (LEI) public-registry collector.
+- Public RDAP domain registration collector.
+- OpenAlex research institution directory collector.
 - Search by organization name or exact 20-character LEI.
 - View source-linked legal entity records and registration details.
 - Click a discovered entity to investigate its exact LEI.
 - Navigate prior searches retained in browser memory.
-- Export the entire session as JSON or open the native share sheet on supported devices.
+- Export the entire session as JSON or HTML, print/save as PDF, or open the native share sheet on supported devices.
 - No database, user account, cookie, or persistent server-side investigation storage.
 - Explicit source-coverage, errors, and unsupported identifier reporting.
 
-**Not yet implemented:** Georgia Secretary of State collector, nationwide property/court/licensing collectors, C++/WASM processing, full relationship graph, PDF/HTML exports, streaming updates, production deployment, and abuse controls. TRACE is not a comprehensive background-check service. It must not infer private contact details, private whereabouts, or unverified personal relationships.
+**Not yet implemented:** Georgia Secretary of State collector, nationwide property/court/licensing collectors, C++/WASM processing, interactive relationship graph, streaming updates, and complete abuse controls. TRACE is not a comprehensive background-check service. It must not infer private contact details, private whereabouts, or unverified personal relationships.
 
 ## Run locally
 
