@@ -1,3 +1,4 @@
+import { subjectHint, exactWordMatch } from "./engine/classifier.js";
 import { cikFrom, investigateSec } from "./collectors/sec.js";
 import { searchInstitutions } from "./collectors/openalex.js";
 import { domainFrom, investigateDomain } from "./collectors/rdap.js";
@@ -36,7 +37,8 @@ export async function investigate(q) {
   q=String(q||"").trim().slice(0,160);
   if(q.length<2)throw Error("Enter at least two characters");
   const type=classify(q);
-  const out={query:q,type,at:new Date().toISOString(),records:[],searched:[],limitations:[],unsupported:[],errors:[]};
+  const subject=type==="name"?subjectHint(q):type;
+  const out={query:q,type,subject,at:new Date().toISOString(),records:[],searched:[],limitations:[],unsupported:[],errors:[]};
   if(type==="cik") {
     out.searched.push("SEC EDGAR public company submissions");
     try{out.records=[await investigateSec(cikFrom(q),"contact@tituspaine.com")]}catch(e){out.errors.push(String(e.message||e))}
@@ -52,10 +54,11 @@ export async function investigate(q) {
         "/lei-records?filter[entity.legalName]="+encodeURIComponent(q)+"&page[size]=25";
       const result=await source(path);
       out.records=(Array.isArray(result.data)?result.data:result.data?[result.data]:[]).map(normalize);
-      if(type==="name"){const tokens=q.toLocaleLowerCase().split(/\s+/).filter(Boolean);out.records=out.records.filter(r=>tokens.every(t=>String(r.name).toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).some(w=>w===t)));out.records.sort((a,b)=>Number(b.name.toLocaleLowerCase()===q.toLocaleLowerCase())-Number(a.name.toLocaleLowerCase()===q.toLocaleLowerCase()));}
+      if(type==="name"){const tokens=q.toLocaleLowerCase().split(/\s+/).filter(Boolean);out.records=out.records.filter(r=>exactWordMatch(q,r.name));out.records.sort((a,b)=>Number(b.name.toLocaleLowerCase()===q.toLocaleLowerCase())-Number(a.name.toLocaleLowerCase()===q.toLocaleLowerCase()));}
     }catch(e){out.errors.push(String(e.message||e))}
     if(type==="name" && /(?:university|college|institute|research|laboratory|academy)/i.test(q)){out.searched.push("OpenAlex research institution directory");try{out.records.push(...await searchInstitutions(q))}catch(e){out.errors.push("OpenAlex unavailable: "+String(e.message||e))}}
     out.limitations.push("Only LEI-bearing organizations are covered by GLEIF. Person investigations require additional sources.");
+    if(subject==="ambiguous_name")out.limitations.push("This may be a person. The current results are organizations only and must not be attributed to a person with a similar name.");
   } else out.unsupported.push("No live collector exists for this identifier yet. TRACE will not fabricate results.");
   out.sourceStatus=out.searched.map(name=>({name,status:out.errors.some(e=>name.includes("OpenAlex")?e.includes("OpenAlex"):name.includes("GLEIF")?e.includes("GLEIF"):name.includes("SEC")?e.includes("SEC"):name.includes("RDAP")?e.includes("RDAP"):false)?"failed":"completed"}));
   return out;
@@ -95,7 +98,7 @@ function show(id){for(const k of ["home","loading","result"])$(k).classList.togg
 function text(tag,value,cls){const n=document.createElement(tag);n.textContent=String(value??"");if(cls)n.className=cls;return n}
 function field(name,value){const d=document.createElement("div");d.append(text("div",name,"field"),text("div",value||"Not provided","value"));return d}
 function setTab(which){for(const key of ["records","graph","timeline","sources"]){$(key).classList.toggle("hidden",key!==which);const b=$("tab"+key[0].toUpperCase()+key.slice(1));b.setAttribute("aria-pressed",String(key===which))}}
-function render(i){$("exportPanel").classList.add("hidden");current=i;const d=session[i];show("result");$("title").textContent=d.query;$("summary").textContent=d.records.length+" records found · "+d.searched.length+" sources attempted"+(d.errors.length?" · "+d.errors.length+" unavailable":"");
+function render(i){$("exportPanel").classList.add("hidden");current=i;const d=session[i];show("result");$("title").textContent=d.query;$("summary").textContent=d.records.length+" candidate records · "+d.searched.length+" sources attempted"+(d.errors.length?" · "+d.errors.length+" unavailable":"");
 $("trail").replaceChildren();session.forEach((x,j)=>{const b=text("button",(j+1)+". "+x.query);b.onclick=()=>render(j);$("trail").append(b)});
 const root=$("records");root.replaceChildren();if(!d.records.length){const empty=text("article","","panel");empty.append(text("h3",d.errors.length?"Some sources were unavailable":"No verified matches from supported sources"),text("p",d.type==="name"?"No exact organization-name matches were returned by the connected registries. Person-name investigations are not supported by these registries.":"The connected public registries did not return matching records. This is not evidence that the subject does not exist.","muted"));if(d.errors.length){empty.append(text("p","Source issue: "+d.errors.join("; "),"muted"));const retry=text("button","Retry search");retry.onclick=()=>{session.splice(current,1);investigate(d.query)};empty.append(retry)}root.append(empty)}
 for(const r of d.records){const card=text("article","","panel");card.append(text("h3",r.name));const grid=text("div","","row");
