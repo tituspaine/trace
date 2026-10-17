@@ -61,12 +61,18 @@ export async function investigate(q) {
 const json=(x,status=200)=>new Response(JSON.stringify(x),{status,headers});
 export default {async fetch(request){
   const u=new URL(request.url);
-  if(request.method!=="GET")return json({error:"Method not allowed"},405);
-  if(u.pathname==="/api/health")return json({ok:true,persistence:false,collector:"GLEIF"});
+  if(u.pathname==="/api/health" && request.method==="GET")return json({ok:true,persistence:false,collectors:["GLEIF","RDAP","OpenAlex","SEC EDGAR"]});
   if(u.pathname==="/api/investigate"){
-    if(request.headers.get("sec-fetch-site") === "cross-site") return json({error:"Cross-site requests disabled"},403);
-    if((u.searchParams.get("q")||"").length>160)return json({error:"Query too long"},400);
-    const q=(u.searchParams.get("q")||"").slice(0,160);
+    if(request.method!=="POST")return json({error:"Use POST"},405);
+    const origin=request.headers.get("origin");
+    if(origin && origin!==u.origin)return json({error:"Cross-origin requests disabled"},403);
+    if(request.headers.get("sec-fetch-site")==="cross-site")return json({error:"Cross-site requests disabled"},403);
+    if(!request.headers.get("content-type")?.toLowerCase().startsWith("application/json"))return json({error:"JSON required"},415);
+    if(Number(request.headers.get("content-length")||0)>2048)return json({error:"Request too large"},413);
+    let payload;
+    try{payload=await request.json()}catch{return json({error:"Invalid JSON"},400)}
+    if(typeof payload?.q!=="string"||payload.q.length>160)return json({error:"Invalid query"},400);
+    const q=payload.q;
     if(q.trim().length<2)return json({error:"Enter at least two characters"},400);
     try{return json(await investigate(q))}catch(e){return json({error:String(e.message||e)},500)}
   }
@@ -102,7 +108,7 @@ const timeline=$("timeline");timeline.replaceChildren();timeline.append(text("h3
 const events=[];for(const r of d.records){if(r.registered)events.push({date:r.registered,label:r.name+" — domain registration"});if(r.expires)events.push({date:r.expires,label:r.name+" — domain expiration"})}
 events.sort((a,b)=>String(a.date).localeCompare(String(b.date)));if(!events.length)timeline.append(text("p","No dated events were provided by the queried sources.","muted"));for(const e of events){const box=text("article","","panel");box.append(text("div",e.date,"timestamp"),text("p",e.label));timeline.append(box)}
 const sources=$("sources");sources.replaceChildren();sources.append(text("h3","Original evidence"));const seen=new Set();for(const r of d.records){if(!r.source?.url||seen.has(r.source.url))continue;seen.add(r.source.url);const a=text("a",r.name+" · "+r.source.name+" ↗","sourceLink");a.href=r.source.url;a.target="_blank";a.rel="noopener noreferrer";sources.append(a)}if(!seen.size)sources.append(text("p","No source records returned.","muted"));setTab("records")}
-async function investigate(q){q=q.trim();if(q.length<2)return;const found=session.findIndex(x=>x.query.toLowerCase()===q.toLowerCase());if(found>=0){render(found);return}active?.abort();active=new AbortController();show("loading");$("progress").textContent="Investigating "+q+"…";try{const response=await fetch("/api/investigate?q="+encodeURIComponent(q),{cache:"no-store",signal:active.signal});const d=await response.json();if(!response.ok)throw Error(d.error||"Search failed");session.push(d);render(session.length-1)}catch(e){if(e.name==="AbortError")return;$("progress").textContent="Search failed: "+e.message;setTimeout(()=>show("home"),2500)}}
+async function investigate(q){q=q.trim();if(q.length<2)return;const found=session.findIndex(x=>x.query.toLowerCase()===q.toLowerCase());if(found>=0){render(found);return}active?.abort();active=new AbortController();show("loading");$("progress").textContent="Investigating "+q+"…";try{const response=await fetch("/api/investigate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({q}),cache:"no-store",signal:active.signal});const d=await response.json();if(!response.ok)throw Error(d.error||"Search failed");session.push(d);render(session.length-1)}catch(e){if(e.name==="AbortError")return;$("progress").textContent="Search failed: "+e.message;setTimeout(()=>show("home"),2500)}}
 for(const name of ["Records","Graph","Timeline","Sources"])$("tab"+name).onclick=()=>setTab(name.toLowerCase());$("cancel").onclick=()=>{active?.abort();show("home")};$("search").onsubmit=e=>{e.preventDefault();investigate($("q").value)};$("new").onclick=()=>{$("q").value="";show("home");$("q").focus()};$("back").onclick=()=>current>0?render(current-1):show("home");
 const content=()=>JSON.stringify({format:"TRACE-session-v1",exportedAt:new Date().toISOString(),investigations:session},null,2);
 $("export").onclick=()=>{const url=URL.createObjectURL(new Blob([content()],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download="trace-investigation.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
