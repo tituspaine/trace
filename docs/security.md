@@ -1,6 +1,6 @@
 # TRACE security and privacy model
 
-TRACE deliberately does not persist investigation results server-side. Browser session data disappears when the page is unloaded. Do not mistake that for anonymity: hosting and upstream providers can record request metadata. Current requests use GET query parameters, which can appear in access logs; avoid entering sensitive information.
+TRACE deliberately does not persist investigation results server-side. Browser session data disappears when the page is unloaded. Do not mistake that for anonymity: hosting and upstream providers can record request metadata. The browser sends investigations to TRACE in a JSON POST body, not a query URL. Some upstream collectors still use GET query parameters, which can appear in provider access logs; avoid entering sensitive information.
 
 ## Deployment gate
 

@@ -2,8 +2,8 @@ const corporate=/\b(llc|inc|incorporated|corp|corporation|ltd|limited|holdings|f
 const address=/\b\d{1,6}\s+[\w.\s-]+\b(st|street|rd|road|ave|avenue|blvd|boulevard|dr|drive|ln|lane|ct|court|way)\b/i;
 export function subjectHint(query){
  const q=String(query||"").trim();
- if(corporate.test(q))return "organization";
  if(address.test(q))return "property";
+ if(corporate.test(q))return "organization";
  if(/^[a-z\s.'-]+$/i.test(q)&&q.split(/\s+/).length>=2)return "ambiguous_name";
  return "unknown";
 }

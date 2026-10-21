@@ -22,7 +22,7 @@ This project is deployable as one Cloudflare Worker. It requires no database, KV
 - The source code includes a C++ normalization experiment; it is **not** compiled into the Worker.
 - Cloudflare and upstream providers may retain network metadata despite application-level no-store responses.
 - Before sharing the URL, configure Cloudflare's available edge rate limiting and abuse protections in your account.
-- Do not use personal identifiers that you would not want exposed in request URLs or provider logs.
+- Do not use personal identifiers that you would not want exposed in provider request URLs or logs; TRACE uses a JSON POST body for its own search API.
 
 ## Rollback
 

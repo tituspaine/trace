@@ -8,6 +8,7 @@
 - Real GLEIF Legal Entity Identifier (LEI) public-registry collector.
 - Public RDAP domain registration collector.
 - OpenAlex research institution directory collector.
+- Exact SEC CIK lookup and USAspending federal contract-award keyword search.
 - Search by organization name or exact 20-character LEI.
 - View source-linked legal entity records and registration details.
 - Click a discovered entity to investigate its exact LEI.
@@ -43,7 +44,7 @@ Deploying requires authorization for your Cloudflare account. Free-tier quotas a
 
 `GET /api/health` — health and persistence status.
 
-`GET /api/investigate?q=example` — query the currently supported public registry and return structured findings, source references, limitations, and errors.
+`POST /api/investigate` with JSON `{ "q": "Example LLC" }` — query the currently supported public sources and return structured findings, source references, per-source outcomes, limitations, and errors. The request body is capped at 2,048 bytes, including streamed bodies without Content-Length.
 
 ## Architecture
 

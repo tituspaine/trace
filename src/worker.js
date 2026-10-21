@@ -37,33 +37,57 @@ async function source(path) {
 export async function investigate(q) {
   q=String(q||"").trim().slice(0,160);
   if(q.length<2)throw Error("Enter at least two characters");
-  const type=classify(q);
-  const subject=type==="name"?subjectHint(q):type;
-  const out={query:q,type,subject,at:new Date().toISOString(),records:[],searched:[],limitations:[],unsupported:[],errors:[]};
+  const type=classify(q),subject=type==="name"?subjectHint(q):type;
+  const out={query:q,type,subject,at:new Date().toISOString(),records:[],searched:[],sourceStatus:[],limitations:[],unsupported:[],errors:[]};
+  // Record outcomes at the call boundary; network/parser errors need not name a provider.
+  async function collect(name,run) {
+    out.searched.push(name);
+    const status={name,status:"pending",records:0};out.sourceStatus.push(status);
+    try {const records=await run();out.records.push(...records);status.status="completed";status.records=records.length;}
+    catch(error){const message=String(error?.message||error);status.status="failed";status.error=message;out.errors.push(name+": "+message);}
+  }
   if(type==="cik") {
-    out.searched.push("SEC EDGAR public company submissions");
-    try{out.records=[await investigateSec(cikFrom(q),"contact@tituspaine.com")]}catch(e){out.errors.push(String(e.message||e))}
+    await collect("SEC EDGAR public company submissions",async()=>[await investigateSec(cikFrom(q),"contact@tituspaine.com")]);
     out.limitations.push("SEC EDGAR covers reporting companies and other SEC filers, not all businesses.");
   } else if(type==="domain" || type==="url") {
     const domain=domainFrom(q);
-    if(domain){out.searched.push("Public RDAP domain registry");try{out.records=[await investigateDomain(domain)]}catch(e){out.errors.push(String(e.message||e))}out.limitations.push("RDAP availability and registration data vary by registry. Private registration contacts are not collected.");}
+    if(domain){await collect("Public RDAP domain registry",async()=>[await investigateDomain(domain)]);out.limitations.push("RDAP availability and registration data vary by registry. Private registration contacts are not collected.");}
     else out.unsupported.push("Invalid or unsupported URL.");
+  } else if(subject==="property") {
+    out.unsupported.push("Property-address investigation is not connected. No property registry was searched.");
   } else if(type==="lei"||type==="name"){
-    out.searched.push("GLEIF public LEI registry");
-    try{
+    await collect("GLEIF public LEI registry",async()=>{
       const path=type==="lei"?"/lei-records/"+encodeURIComponent(q.toUpperCase()):
         "/lei-records?filter[entity.legalName]="+encodeURIComponent(q)+"&page[size]=25";
       const result=await source(path);
-      out.records=(Array.isArray(result.data)?result.data:result.data?[result.data]:[]).map(normalize);
-      if(type==="name"){const tokens=q.toLocaleLowerCase().split(/\s+/).filter(Boolean);out.records=out.records.filter(r=>exactWordMatch(q,r.name));out.records.sort((a,b)=>Number(b.name.toLocaleLowerCase()===q.toLocaleLowerCase())-Number(a.name.toLocaleLowerCase()===q.toLocaleLowerCase()));}
-    }catch(e){out.errors.push(String(e.message||e))}
-    if(type==="name" && /(?:university|college|institute|research|laboratory|academy)/i.test(q)){out.searched.push("OpenAlex research institution directory");try{out.records.push(...await searchInstitutions(q))}catch(e){out.errors.push("OpenAlex unavailable: "+String(e.message||e))}}
-    out.limitations.push("Only LEI-bearing organizations are covered by GLEIF. Person investigations require additional sources.");
+      if(!result||!(Array.isArray(result.data)||(result.data&&typeof result.data==="object")))throw Error("Invalid registry response");
+      let records=(Array.isArray(result.data)?result.data:[result.data]).map(normalize);
+      if(type==="name"){records=records.filter(r=>exactWordMatch(q,r.name));records.sort((a,b)=>Number(b.name.toLocaleLowerCase()===q.toLocaleLowerCase())-Number(a.name.toLocaleLowerCase()===q.toLocaleLowerCase()));}
+      return records;
+    });
+    if(type==="name" && /\b(?:university|college|institute|research|laboratory|academy)\b/i.test(q)) {
+      await collect("OpenAlex research institution directory",async()=>(await searchInstitutions(q)).filter(r=>exactWordMatch(q,r.name)));
+    }
+    out.limitations.push("Only LEI-bearing organizations are covered by GLEIF. Name matches are candidates, not proof of identity. Person investigations require additional sources.");
     if(subject==="ambiguous_name")out.limitations.push("This may be a person. The current results are organizations only and must not be attributed to a person with a similar name.");
-    if(subject==="organization" && q.length>=5){out.searched.push("USAspending federal awards");try{const awards=await searchAwards(q);out.records.push(...awards.filter(r=>exactWordMatch(q,r.recipient)))}catch(e){out.errors.push("USAspending: "+String(e.message||e))}}
+    if(subject==="organization" && q.length>=5){await collect("USAspending federal contract awards",async()=>(await searchAwards(q)).filter(r=>exactWordMatch(q,r.recipient)));out.limitations.push("USAspending coverage here is limited to the first 10 federal contract awards returned by keyword search, not all grants or recipient history.");}
+    out.limitations.push("Results are bounded to the first provider page (GLEIF 25; OpenAlex 10). Missing results do not establish absence.");
   } else out.unsupported.push("No live collector exists for this identifier yet. TRACE will not fabricate results.");
-  out.sourceStatus=out.searched.map(name=>({name,status:out.errors.some(e=>name.includes("OpenAlex")?e.includes("OpenAlex"):name.includes("GLEIF")?e.includes("GLEIF"):name.includes("SEC")?e.includes("SEC"):name.includes("RDAP")?e.includes("RDAP"):name.includes("USAspending")?e.includes("USAspending"):false)?"failed":"completed"}));
+  out.coverageStatus=!out.searched.length?"unsupported":out.errors.length?(out.sourceStatus.some(s=>s.status==="completed")?"partial":"failed"):"completed";
   return out;
+}
+export async function readBoundedJson(request,limit=2048) {
+  const reader=request.body?.getReader();
+  if(!reader)throw Error("Invalid JSON");
+  const chunks=[];let size=0;
+  try {
+    while(true){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;
+      if(size>limit){try{await reader.cancel()}catch{}const error=Error("Request too large");error.status=413;throw error;}
+      chunks.push(value);
+    }
+  } finally {reader.releaseLock();}
+  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+  return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));
 }
 const json=(x,status=200)=>new Response(JSON.stringify(x),{status,headers});
 export default {async fetch(request){
@@ -77,7 +101,7 @@ export default {async fetch(request){
     if(!request.headers.get("content-type")?.toLowerCase().startsWith("application/json"))return json({error:"JSON required"},415);
     if(Number(request.headers.get("content-length")||0)>2048)return json({error:"Request too large"},413);
     let payload;
-    try{payload=await request.json()}catch{return json({error:"Invalid JSON"},400)}
+    try{payload=await readBoundedJson(request)}catch(e){return json({error:e.status===413?"Request too large":"Invalid JSON"},e.status===413?413:400)}
     if(typeof payload?.q!=="string"||payload.q.length>160)return json({error:"Invalid query"},400);
     const q=payload.q;
     if(q.trim().length<2)return json({error:"Enter at least two characters"},400);
@@ -98,14 +122,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta n
 (()=>{"use strict";const $=id=>document.getElementById(id),session=[];let current=-1,active=null;
 function show(id){for(const k of ["home","loading","result"])$(k).classList.toggle("hidden",k!==id)}
 function text(tag,value,cls){const n=document.createElement(tag);n.textContent=String(value??"");if(cls)n.className=cls;return n}
-function field(name,value){const d=document.createElement("div");d.append(text("div",name,"field"),text("div",value||"Not provided","value"));return d}
+function field(name,value){const d=document.createElement("div");d.append(text("div",name,"field"),text("div",value??"Not provided","value"));return d}
 function setTab(which){for(const key of ["records","graph","timeline","sources"]){$(key).classList.toggle("hidden",key!==which);const b=$("tab"+key[0].toUpperCase()+key.slice(1));b.setAttribute("aria-pressed",String(key===which))}}
-function render(i){$("exportPanel").classList.add("hidden");current=i;const d=session[i];show("result");$("title").textContent=d.query;$("summary").textContent=d.records.length+" candidate records · "+d.searched.length+" sources attempted"+(d.errors.length?" · "+d.errors.length+" unavailable":"");
+function render(i){$("exportPanel").classList.add("hidden");current=i;const d=session[i];show("result");$("title").textContent=d.query;$("summary").textContent=d.coverageStatus==="unsupported"?"Unsupported search · no sources queried":d.records.length+" candidate records · "+d.searched.length+" sources attempted"+(d.errors.length?" · "+d.errors.length+" unavailable":"");
 $("trail").replaceChildren();session.forEach((x,j)=>{const b=text("button",(j+1)+". "+x.query);b.onclick=()=>render(j);$("trail").append(b)});
-const root=$("records");root.replaceChildren();if(!d.records.length){const empty=text("article","","panel");empty.append(text("h3",d.errors.length?"Some sources were unavailable":"No verified matches from supported sources"),text("p",d.type==="name"?"No exact organization-name matches were returned by the connected registries. Person-name investigations are not supported by these registries.":"The connected public registries did not return matching records. This is not evidence that the subject does not exist.","muted"));if(d.errors.length){empty.append(text("p","Source issue: "+d.errors.join("; "),"muted"));const retry=text("button","Retry search");retry.onclick=()=>{session.splice(current,1);investigate(d.query)};empty.append(retry)}root.append(empty)}
+const root=$("records");root.replaceChildren();if(!d.records.length){const empty=text("article","","panel");empty.append(text("h3",d.unsupported.length?"This search is not supported":d.errors.length?"Some sources were unavailable":"No candidate matches from supported sources"),text("p",d.unsupported.length?d.unsupported.join(" "):d.type==="name"?"No organization-name candidates matching all query words were returned on the checked source pages. Person-name investigations are not supported by these registries.":"The connected public registries did not return matching records. This is not evidence that the subject does not exist.","muted"));root.append(empty)}
+if(d.errors.length){const warning=text("article","","panel");warning.append(text("h3","Incomplete source coverage"),text("p",d.errors.join("; "),"muted"));const retry=text("button","Retry search");retry.onclick=()=>investigate(d.query,true);warning.append(retry);root.append(warning)}
 for(const r of d.records){const card=text("article","","panel");card.append(text("h3",r.name));const grid=text("div","","row");
 for(const [label,value] of [["LEI",r.lei],["SEC CIK",r.cik],["Industry",r.sicDescription],["Tickers",r.tickers?.join(", ")],["Jurisdiction",r.jurisdiction],["Entity status",r.status],["Registration status",r.registrationStatus],["Registration number",r.registrationNumber],["Legal address",r.legalAddress],["Headquarters",r.headquartersAddress],["Domain",r.domain],["Registered",r.registered],["Expires",r.expires],["Nameservers",r.nameservers?.join(", ")],["Website",r.website],["City",r.city],["Research works",r.worksCount],["Federal award amount",r.amount],["Awarding agency",r.awardingAgency],["Award type",r.awardType],["Award description",r.description]]){if(value!==null&&value!==undefined&&value!==""&&!(Array.isArray(value)&&!value.length))grid.append(field(label,value))}card.append(grid);
-const p=document.createElement("p"),a=text("a","View original "+r.source.name+" ↗");a.href=r.source.url;a.rel="noopener noreferrer";a.target="_blank";p.append(a);card.append(p);
+const p=document.createElement("p"),a=text("a",(r.source.recordSpecific===false?"Search source: ":"View original ")+r.source.name+" ↗");a.href=r.source.url;a.rel="noopener noreferrer";a.target="_blank";p.append(a);card.append(p);
 if(r.lei||r.domain||r.cik){const b=text("button","Investigate "+r.name+" →");b.onclick=()=>investigate(r.lei||r.domain||("CIK "+r.cik));card.append(b)}root.append(card)}
 const details=text("article","","panel");details.append(text("h3","Coverage and limitations"));for(const [name,items] of [["Searched",d.searched],["Unsupported",d.unsupported],["Limitations",d.limitations],["Errors",d.errors]])if(items?.length){details.append(text("div",name,"field"));items.forEach(v=>details.append(text("p",v,"value")))}root.append(details);
 const graph=$("graph");graph.replaceChildren();graph.append(text("h3","Investigation connections"),text("p","Each result below was returned by a source queried for this investigation. This does not establish a personal or ownership relationship.","muted"));
@@ -114,13 +139,13 @@ for(const r of d.records){const b=text("button",r.name+" →","graphNode");b.app
 const timeline=$("timeline");timeline.replaceChildren();timeline.append(text("h3","Evidence timeline"),text("p","Dates below come from source records. They are not a timeline of the subject's personal movements.","muted"));
 const events=[];for(const r of d.records){if(r.registered)events.push({date:r.registered,label:r.name+" — domain registration"});if(r.expires)events.push({date:r.expires,label:r.name+" — domain expiration"})}
 events.sort((a,b)=>String(a.date).localeCompare(String(b.date)));if(!events.length)timeline.append(text("p","No dated events were provided by the queried sources.","muted"));for(const e of events){const box=text("article","","panel");box.append(text("div",e.date,"timestamp"),text("p",e.label));timeline.append(box)}
-const sources=$("sources");sources.replaceChildren();sources.append(text("h3","Original evidence"));const seen=new Set();for(const r of d.records){if(!r.source?.url||seen.has(r.source.url))continue;seen.add(r.source.url);const a=text("a",r.name+" · "+r.source.name+" ↗","sourceLink");a.href=r.source.url;a.target="_blank";a.rel="noopener noreferrer";sources.append(a)}if(!seen.size)sources.append(text("p","No source records returned.","muted"));setTab("records")}
-async function investigate(q){q=q.trim();if(q.length<2)return;const found=session.findIndex(x=>x.query.toLowerCase()===q.toLowerCase());if(found>=0){render(found);return}active?.abort();active=new AbortController();show("loading");$("progress").textContent="Investigating "+q+"…";try{const response=await fetch("/api/investigate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({q}),cache:"no-store",signal:active.signal});const d=await response.json();if(!response.ok)throw Error(d.error||"Search failed");session.push(d);render(session.length-1)}catch(e){if(e.name==="AbortError")return;$("progress").textContent="Search failed: "+e.message;void 0}}
+const sources=$("sources");sources.replaceChildren();sources.append(text("h3","Original evidence"));for(const outcome of d.sourceStatus||[])sources.append(text("p",outcome.name+" — "+outcome.status+(outcome.status==="completed"?" · "+outcome.records+" candidates":""),"muted"));const seen=new Set();for(const r of d.records){if(!r.source?.url||seen.has(r.source.url))continue;seen.add(r.source.url);const a=text("a",r.name+" · "+r.source.name+" ↗","sourceLink");a.href=r.source.url;a.target="_blank";a.rel="noopener noreferrer";sources.append(a)}if(!seen.size)sources.append(text("p","No source records returned.","muted"));setTab("records")}
+async function investigate(q,refresh=false){q=q.trim();if(q.length<2)return;const found=refresh?-1:session.findIndex(x=>x.query.toLowerCase()===q.toLowerCase()&&!x.errors.length);if(found>=0){render(found);return}active?.abort();active=new AbortController();show("loading");$("progress").textContent="Investigating "+q+"…";try{const response=await fetch("/api/investigate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({q}),cache:"no-store",signal:active.signal});const d=await response.json();if(!response.ok)throw Error(d.error||"Search failed");session.push(d);render(session.length-1)}catch(e){if(e.name==="AbortError")return;$("progress").textContent="Search failed: "+e.message;void 0}}
 for(const name of ["Records","Graph","Timeline","Sources"])$("tab"+name).onclick=()=>setTab(name.toLowerCase());$("cancel").onclick=()=>{active?.abort();show("home")};$("search").onsubmit=e=>{e.preventDefault();investigate($("q").value)};$("new").onclick=()=>{$("q").value="";show("home");$("q").focus()};$("back").onclick=()=>current>0?render(current-1):show("home");
 const content=()=>JSON.stringify({format:"TRACE-session-v1",exportedAt:new Date().toISOString(),investigations:session},null,2);
 $("export").onclick=()=>{const url=URL.createObjectURL(new Blob([content()],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download="trace-investigation.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 $("htmlExport").onclick=()=>{const data=content().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");const html='<!doctype html><html lang="en"><meta charset="utf-8"><title>TRACE investigation archive</title><style>body{font:15px system-ui;max-width:850px;margin:35px auto;padding:20px;line-height:1.6}pre{white-space:pre-wrap;overflow-wrap:anywhere}h1{letter-spacing:.2em}</style><h1>TRACE</h1><p>Self-contained investigation archive. Evidence links require internet access.</p><pre>'+data+'</pre></html>';const url=URL.createObjectURL(new Blob([html],{type:"text/html"}));const a=document.createElement("a");a.href=url;a.download="trace-investigation.html";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 $("print").onclick=()=>window.print();
-$("share").onclick=async()=>{const file=new File([content()],"trace-investigation.json",{type:"application/json"});if(navigator.canShare?.({files:[file]})){try{await navigator.share({files:[file],title:"TRACE investigation"})}catch(e){if(e.name!=="AbortError")$("exportPanel").classList.remove("hidden")}}else $("exportPanel").classList.toggle("hidden")};
+$("share").onclick=async()=>{const file=new File([content()],"trace-investigation.json",{type:"application/json"});if(navigator.canShare?.({files:[file]})){try{await navigator.share({files:[file],title:"TRACE investigation"})}catch(e){$("exportPanel").classList.remove("hidden")}}else $("exportPanel").classList.toggle("hidden")};
 })();
 </script></body></html>`;

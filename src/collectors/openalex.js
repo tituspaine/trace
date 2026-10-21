@@ -12,6 +12,7 @@ export async function searchInstitutions(query) {
     const response=await fetch(u,{signal:controller.signal,headers:{accept:"application/json"}});
     if(!response.ok)throw Error("OpenAlex HTTP "+response.status);
     const data=await response.json();
-    return (data.results||[]).map(normalizeInstitution);
+    if(!Array.isArray(data.results))throw Error("Invalid institution search response");
+    return data.results.map(normalizeInstitution);
   } finally {clearTimeout(timer)}
 }
